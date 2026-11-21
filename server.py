@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-import os, shutil, subprocess, sys, tempfile, threading, json, re
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT    = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
+# Dynamic port for Render deployment
+PORT    = int(os.environ.get("PORT", 8080))
 TIMEOUT = 60
 ROOT    = os.path.dirname(os.path.abspath(__file__))
-
-STATIC = {
-    "/":           ("index.html", "text/html; charset=utf-8"),
-    "/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/script.js":  ("script.js",  "application/javascript; charset=utf-8"),
-}
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -21,21 +23,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # CORS Headers for Cloudflare Pages
+        self.send_header("Access-Control-Allow-Origin", "*") 
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
-        path = self.path.split("?", 1)[0]
-        entry = STATIC.get(path)
-        if entry is None:
-            self._send(404, "text/plain", "Not found"); return
-        fname, ctype = entry
-        fp = os.path.join(ROOT, fname)
-        if not os.path.exists(fp):
-            self._send(404, "text/plain", f"Missing file: {fp}"); return
-        with open(fp, "rb") as f:
-            data = f.read()
-        self._send(200, ctype, data)
+    def do_OPTIONS(self):
+        # Handle CORS preflight requests
+        self._send(200, "text/plain", "")
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
@@ -51,7 +48,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", "Not found")
 
     def handle_lint(self, code):
-        tmpdir = tempfile.mkdtemp(prefix="goterm-lint-")
+        tmpdir = tempfile.mkdtemp(prefix="gopilr-lint-")
         try:
             src = os.path.join(tmpdir, "main.go")
             with open(src, "w", encoding="utf-8") as f:
@@ -62,11 +59,10 @@ class Handler(BaseHTTPRequestHandler):
             
             errors = []
             if proc.returncode != 0:
-                # Parse go vet output: main.go:4:2: undefined: x
                 for line in proc.stderr.split('\n'):
                     match = re.search(r'main\.go:(\d+):(\d+):\s*(.*)', line)
                     if match:
-                        line_num = int(match.group(1)) - 1  # CM lines are 0-indexed
+                        line_num = int(match.group(1)) - 1
                         col_num  = int(match.group(2)) - 1
                         message  = match.group(3)
                         errors.append({
@@ -76,7 +72,7 @@ class Handler(BaseHTTPRequestHandler):
                             "severity": "error"
                         })
             self._send(200, "application/json", json.dumps(errors))
-        except Exception as e:
+        except Exception:
             self._send(200, "application/json", "[]")
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -86,6 +82,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Transfer-Encoding", "chunked")
+        # CORS for streaming response
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
         def chunk(data: bytes):
@@ -98,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except: pass
 
-        tmpdir = tempfile.mkdtemp(prefix="goterm-run-")
+        tmpdir = tempfile.mkdtemp(prefix="gopilr-run-")
         proc = None
         try:
             with open(os.path.join(tmpdir, "main.go"), "w", encoding="utf-8") as f:
@@ -137,16 +135,18 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-    def log_message(self, fmt, *args): pass
+    def log_message(self, fmt, *args): 
+        pass
 
 def main():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("=" * 52)
-    print(" GoPilr is running")
-    print(f" Open in browser:        http://127.0.0.1:{PORT}")
+    print(f" GoPilr backend is running on port {PORT}")
     print("=" * 52)
-    try: server.serve_forever()
-    except KeyboardInterrupt: print("\nStopped.")
+    try: 
+        server.serve_forever()
+    except KeyboardInterrupt: 
+        print("\nStopped.")
 
 if __name__ == "__main__":
     main()
