@@ -1,4 +1,4 @@
-FROM python:3.11-alphine
+FROM python:3.11-alpine
 RUN apk add --no-cache go
 WORKDIR /app
 COPY server.py .
